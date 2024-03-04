@@ -12,7 +12,7 @@ import (
 	"strings"
 )
 
-const Version_of_program = "2024_03_04_01"
+const Version_of_program = "2024_03_04_04"
 
 type TRepotyAtolKKT struct {
 	Type     string    `json:"type"`
@@ -30,11 +30,11 @@ type TShiftStatus struct {
 }
 
 type TTask struct {
-	Positions []TPosition `json:"positions"`
-	Cash      float64     `json:"cash"`
-	Beznal    float64     `json:"beznal"`
-	Return    bool        `json:"return"`
-	Cassir    string      `json:"cassir"`
+	Positions []TPositionTask `json:"positions"`
+	Cash      float64         `json:"cash"`
+	Beznal    float64         `json:"beznal"`
+	Return    bool            `json:"return"`
+	Cassir    string          `json:"cassir"`
 }
 
 type TOperator struct {
@@ -46,11 +46,25 @@ type TTaxNDS struct {
 	Type string `json:"type,omitempty"`
 }
 
+type TPositionTask struct {
+	Type  string  `json:"type"`
+	Name  string  `json:"name"`
+	Price float64 `json:"price"`
+	//Quantity        float64  `json:"quantity"`
+	Quantity        string   `json:"quantity"`
+	Amount          float64  `json:"amount"`
+	MeasurementUnit string   `json:"measurementUnit"`
+	PaymentMethod   string   `json:"paymentMethod"`
+	PaymentObject   string   `json:"paymentObject"`
+	Tax             *TTaxNDS `json:"tax,omitempty"`
+}
+
 type TPosition struct {
-	Type            string   `json:"type"`
-	Name            string   `json:"name"`
-	Price           float64  `json:"price"`
-	Quantity        float64  `json:"quantity"`
+	Type     string  `json:"type"`
+	Name     string  `json:"name"`
+	Price    float64 `json:"price"`
+	Quantity float64 `json:"quantity"`
+	//Quantity        string   `json:"quantity"`
 	Amount          float64  `json:"amount"`
 	MeasurementUnit string   `json:"measurementUnit"`
 	PaymentMethod   string   `json:"paymentMethod"`
@@ -109,10 +123,19 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	var summOfCheck float64
 	for _, pos := range task.Positions {
 		Item := new(TPosition)
+		Item.Type = "position"
 		Item.Name = pos.Name
-		Item.Quantity = pos.Quantity
+		quant, err := strconv.ParseFloat(pos.Quantity, 64)
+		if err != nil {
+			errDescr := fmt.Sprintf("ошибка (%v) парсинга (%v) поля количества", err, pos.Quantity)
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(errDescr))
+			fmt.Println(errDescr)
+			return
+		}
+		Item.Quantity = quant
 		Item.Price = pos.Price
-		Amount := Item.Price * Item.Quantity
+		Amount := Item.Price * quant
 		summOfCheck = summOfCheck + Amount
 		Item.Amount = Amount
 		Item.MeasurementUnit = "piece"
@@ -138,7 +161,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		fmt.Println(fmt.Sprintln(err))
 		return
 	}
-	jsonAnswer, err := sendComandeAndGetAnswerFromKKT(string(jsonCheck))
+	jsonAnswer, err := sendComandeAndGetAnswerFromKKT(string(jsonCheck), check.Operator.Name)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(fmt.Sprintln(err)))
@@ -149,7 +172,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 }
 
 // func sendComandeAndGetAnswerFromKKT(fptr *fptr10.IFptr, comJson string) (string, error) {
-func sendComandeAndGetAnswerFromKKT(comJson string) (string, error) {
+func sendComandeAndGetAnswerFromKKT(comJson, cassir string) (string, error) {
 	//return "", nil
 	//qqq := "{\"type\": \"reportX\", \"operator\": {\"name\": \"Иванов\"}"
 	fmt.Println("comJson", comJson)
@@ -159,8 +182,17 @@ func sendComandeAndGetAnswerFromKKT(comJson string) (string, error) {
 	if !connected {
 		return "", fmt.Errorf("ошибка подключения к ККТ")
 	}
+	if cassir == "" {
+		cassir = "админ"
+	}
 	fmt.Println("Успешное подключение к ККТ", typeconn)
-	shiftOpenned, err := checkOpenShift(fptr, true, "админ")
+	_, err := checkCloseShift(fptr, true, cassir)
+	if err != nil {
+		errorDescr := fmt.Sprintf("ошибка (%v). Смена истекла", err)
+		//logsmap[LOGERROR].Println(errorDescr)
+		return "", errors.New(errorDescr)
+	}
+	shiftOpenned, err := checkOpenShift(fptr, true, cassir)
 	if err != nil {
 		errorDescr := fmt.Sprintf("ошибка (%v). Смена не открыта", err)
 		//logsmap[LOGERROR].Println(errorDescr)
@@ -171,17 +203,22 @@ func sendComandeAndGetAnswerFromKKT(comJson string) (string, error) {
 		//logsmap[LOGERROR].Println(errorDescr)
 		return "", errors.New(errorDescr)
 	}
-
+	fmt.Println("main_command=", comJson)
 	fptr.SetParam(fptr10.LIBFPTR_PARAM_JSON_DATA, comJson)
+	fptr.ProcessJson()
 	result := fptr.GetParamString(fptr10.LIBFPTR_PARAM_JSON_DATA)
+	fmt.Println("res_main=", result)
 	disconnectWithKKT(fptr, true)
 	fmt.Println("result", result)
 	return result, nil
 }
 
 func sendComandeAndGetAnswerFromKKT__FPTR(fptr *fptr10.IFptr, comJson string) (string, error) {
+	fmt.Println("command=", comJson)
 	fptr.SetParam(fptr10.LIBFPTR_PARAM_JSON_DATA, comJson)
+	fptr.ProcessJson()
 	result := fptr.GetParamString(fptr10.LIBFPTR_PARAM_JSON_DATA)
+	fmt.Println("result=", result)
 	return result, nil
 }
 
@@ -221,7 +258,7 @@ func disconnectWithKKT(fptr *fptr10.IFptr, destroyComObject bool) {
 
 func checkCloseShift(fptr *fptr10.IFptr, closeShiftIfClose bool, kassir string) (bool, error) {
 	//logginInFile("получаем статус ККТ")
-	getStatusKKTJson := "{\"type\": \"getDeviceStatus\"}"
+	getStatusKKTJson := "{\"type\": \"getShiftStatus\"}"
 	resgetStatusKKT, err := sendComandeAndGetAnswerFromKKT__FPTR(fptr, getStatusKKTJson)
 	if err != nil {
 		errorDescr := fmt.Sprintf("ошибка (%v) получения статуса кассы", err)
@@ -237,11 +274,11 @@ func checkCloseShift(fptr *fptr10.IFptr, closeShiftIfClose bool, kassir string) 
 		return false, errors.New(errorDescr)
 	}
 	//logginInFile("получили статус кассы")
-	//проверяем - открыта ли смена
+	//проверяем - не истёк ли таймаут смена
 	var answerOfGetStatusofShift TAnswerGetStatusOfShift
 	err = json.Unmarshal([]byte(resgetStatusKKT), &answerOfGetStatusofShift)
 	if err != nil {
-		errorDescr := fmt.Sprintf("ошибка (%v) распарсивания статуса кассы", err)
+		errorDescr := fmt.Sprintf("ошибка (%v) распарсивания (%v) статуса кассы", err, resgetStatusKKT)
 		fmt.Println(errorDescr)
 		//logsmap[LOGERROR].Println(errorDescr)
 		return false, err
@@ -258,15 +295,15 @@ func checkCloseShift(fptr *fptr10.IFptr, closeShiftIfClose bool, kassir string) 
 				return false, errors.New(errorDescr)
 			}
 			jsonCloseShift := fmt.Sprintf("{\"type\": \"closeShift\",\"operator\": {\"name\": \"%v\"}}", kassir)
-			resOpenShift, err := sendComandeAndGetAnswerFromKKT__FPTR(fptr, jsonCloseShift)
+			resCloseShift, err := sendComandeAndGetAnswerFromKKT__FPTR(fptr, jsonCloseShift)
 			if err != nil {
 				errorDescr := fmt.Sprintf("ошбика (%v) - не удалось закрыть смену", err)
 				fmt.Println(errorDescr)
 				//logsmap[LOGERROR].Println(errorDescr)
 				return false, errors.New(errorDescr)
 			}
-			if !successCommand(resOpenShift) {
-				errorDescr := fmt.Sprintf("ошбика (%v) - не удалось закрыть смену", resOpenShift)
+			if !successCommand(resCloseShift) {
+				errorDescr := fmt.Sprintf("ошбика (%v) - не удалось закрыть смену", resCloseShift)
 				fmt.Println(errorDescr)
 				//logsmap[LOGERROR].Println(errorDescr)
 				return false, errors.New(errorDescr)
@@ -280,7 +317,7 @@ func checkCloseShift(fptr *fptr10.IFptr, closeShiftIfClose bool, kassir string) 
 
 func checkOpenShift(fptr *fptr10.IFptr, openShiftIfClose bool, kassir string) (bool, error) {
 	//logginInFile("получаем статус ККТ")
-	getStatusKKTJson := "{\"type\": \"getDeviceStatus\"}"
+	getStatusKKTJson := "{\"type\": \"getShiftStatus\"}"
 	resgetStatusKKT, err := sendComandeAndGetAnswerFromKKT__FPTR(fptr, getStatusKKTJson)
 	if err != nil {
 		errorDescr := fmt.Sprintf("ошибка (%v) получения статуса кассы", err)
@@ -300,7 +337,7 @@ func checkOpenShift(fptr *fptr10.IFptr, openShiftIfClose bool, kassir string) (b
 	var answerOfGetStatusofShift TAnswerGetStatusOfShift
 	err = json.Unmarshal([]byte(resgetStatusKKT), &answerOfGetStatusofShift)
 	if err != nil {
-		errorDescr := fmt.Sprintf("ошибка (%v) распарсивания статуса кассы", err)
+		errorDescr := fmt.Sprintf("ошибка (%v) распарсивания (%v) статуса кассы", err, resgetStatusKKT)
 		fmt.Println(errorDescr)
 		//logsmap[LOGERROR].Println(errorDescr)
 		return false, err

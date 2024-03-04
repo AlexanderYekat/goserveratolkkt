@@ -40,13 +40,13 @@ class item {
 $it1 = new item();
 $it1->description = "наименование товара 1";
 $it1->brand = "brand1";
-$it1->quntityFinal = 3;
+$it1->quntityFinal = "3";
 $it1->priceOut = 200;
 
 $it2 = new item();
 $it2->description = "наименование товара 2";
 $it2->brand = "brand2";
-$it2->quntityFinal = 1;
+$it2->quntityFinal = "1";
 $it2->priceOut = 250;
 
 $zapr = new TZak();
