@@ -12,6 +12,8 @@ import (
 	"strings"
 )
 
+const Version_of_program = "2024_03_04_01"
+
 type TRepotyAtolKKT struct {
 	Type     string    `json:"type"`
 	Operator TOperator `json:"operator"`
@@ -75,7 +77,7 @@ type TCheck struct {
 
 // var fptr *fptr10.IFptr
 func main() {
-	fmt.Println("Запуск сервера на порту 8080")
+	fmt.Printf("Запуск сервера печати чеков на порту 8080. Версия программы: %v\n", Version_of_program)
 	http.HandleFunc("/", handler)
 	http.ListenAndServe(":8080", nil)
 }
@@ -104,12 +106,14 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	if task.Cassir == "" {
 		check.Operator.Name = "Иванов"
 	}
+	var summOfCheck float64
 	for _, pos := range task.Positions {
 		Item := new(TPosition)
 		Item.Name = pos.Name
 		Item.Quantity = pos.Quantity
 		Item.Price = pos.Price
 		Amount := Item.Price * Item.Quantity
+		summOfCheck = summOfCheck + Amount
 		Item.Amount = Amount
 		Item.MeasurementUnit = "piece"
 		Item.PaymentMethod = "fullPayment"
@@ -123,6 +127,9 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	}
 	if task.Beznal > 0 {
 		check.Payments = append(check.Payments, TPayment{"prepayment", task.Beznal})
+	}
+	if len(check.Payments) == 0 {
+		check.Payments = append(check.Payments, TPayment{"cash", summOfCheck})
 	}
 	jsonCheck, err := json.Marshal(check)
 	if err != nil {
@@ -138,7 +145,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		fmt.Println(fmt.Sprintln(err))
 		return
 	}
-	fmt.Fprintf(w, jsonAnswer)
+	fmt.Fprint(w, jsonAnswer)
 }
 
 // func sendComandeAndGetAnswerFromKKT(fptr *fptr10.IFptr, comJson string) (string, error) {
@@ -150,7 +157,7 @@ func sendComandeAndGetAnswerFromKKT(comJson string) (string, error) {
 	defer fptr.Destroy()
 	connected, typeconn := connectWithKassa(fptr, 0, "", "")
 	if !connected {
-		return "", fmt.Errorf("Ошибка подключения к ККТ")
+		return "", fmt.Errorf("ошибка подключения к ККТ")
 	}
 	fmt.Println("Успешное подключение к ККТ", typeconn)
 	shiftOpenned, err := checkOpenShift(fptr, true, "админ")
