@@ -13,7 +13,7 @@ import (
 	"strings"
 )
 
-const Version_of_program = "2024_03_25_01"
+const Version_of_program = "2024_03_25_02"
 
 type TRepotyAtolKKT struct {
 	Type     string    `json:"type"`
@@ -91,30 +91,53 @@ type TCheck struct {
 }
 
 var glKassirName = flag.String("kassir", "админ", "имя, фамилия кассира")
+var glCloseShift = flag.Bool("closeshift", true, "закрыть смену при запуске программы")
+var glOpenShift = flag.Bool("openshift", true, "открыть смену при запуске программы")
 
 // var fptr *fptr10.IFptr
 func main() {
 	fmt.Printf("Запуск сервера печати чеков на порту 8080. Версия программы: %v\n", Version_of_program)
 	flag.Parse()
 
-	fptrfocloseshift, _ := fptr10.NewSafe()
-	connected, typeconn := connectWithKassa(fptrfocloseshift, 0, "", "")
-	if !connected {
-		panic("ошибка подключения к ККТ")
+	if *glCloseShift || *glOpenShift {
+		fptrfocloseshift, _ := fptr10.NewSafe()
+		connected, typeconn := connectWithKassa(fptrfocloseshift, 0, "", "")
+		if !connected {
+			fptrfocloseshift.Destroy()
+			panic("ошибка подключения к ККТ")
+		}
+		cassir := *glKassirName
+		if cassir == "" {
+			cassir = "админ"
+		}
+		fmt.Println("Успешное подключение к ККТ", typeconn)
+		if *glCloseShift {
+			_, err := checkCloseShift(fptrfocloseshift, true, cassir, true)
+			if err != nil {
+				fptrfocloseshift.Close()
+				fptrfocloseshift.Destroy()
+				errorDescr := fmt.Sprintf("ошибка (%v) закрытия смены", err)
+				panic(errorDescr)
+			}
+		}
+		if *glOpenShift {
+			shiftOpenned, err := checkOpenShift(fptrfocloseshift, true, cassir)
+			if err != nil {
+				fptrfocloseshift.Close()
+				fptrfocloseshift.Destroy()
+				errorDescr := fmt.Sprintf("ошибка (%v). Смена не открыта", err)
+				panic(errorDescr)
+			}
+			if !shiftOpenned {
+				fptrfocloseshift.Close()
+				fptrfocloseshift.Destroy()
+				errorDescr := fmt.Sprintf("ошибка (%v) - смена не открыта", err)
+				panic(errorDescr)
+			}
+		}
+		fptrfocloseshift.Close()
+		fptrfocloseshift.Destroy()
 	}
-	cassir := *glKassirName
-	if cassir == "" {
-		cassir = "админ"
-	}
-	fmt.Println("Успешное подключение к ККТ", typeconn)
-	_, err := checkCloseShift(fptrfocloseshift, true, cassir, true)
-	if err != nil {
-		errorDescr := fmt.Sprintf("ошибка (%v) закрытия смены", err)
-		panic(errorDescr)
-	}
-	fptrfocloseshift.Close()
-	fptrfocloseshift.Destroy()
-
 	http.HandleFunc("/", handler)
 	http.ListenAndServe(":8080", nil)
 }
