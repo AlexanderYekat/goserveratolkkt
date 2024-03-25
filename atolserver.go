@@ -4,6 +4,7 @@ import (
 	fptr10 "atolserver/fptr"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -12,7 +13,7 @@ import (
 	"strings"
 )
 
-const Version_of_program = "2024_03_04_04"
+const Version_of_program = "2024_03_25_01"
 
 type TRepotyAtolKKT struct {
 	Type     string    `json:"type"`
@@ -89,9 +90,31 @@ type TCheck struct {
 	Total    float64     `json:"total,omitempty"`
 }
 
+var glKassirName = flag.String("kassir", "админ", "имя, фамилия кассира")
+
 // var fptr *fptr10.IFptr
 func main() {
 	fmt.Printf("Запуск сервера печати чеков на порту 8080. Версия программы: %v\n", Version_of_program)
+	flag.Parse()
+
+	fptrfocloseshift, _ := fptr10.NewSafe()
+	connected, typeconn := connectWithKassa(fptrfocloseshift, 0, "", "")
+	if !connected {
+		panic("ошибка подключения к ККТ")
+	}
+	cassir := *glKassirName
+	if cassir == "" {
+		cassir = "админ"
+	}
+	fmt.Println("Успешное подключение к ККТ", typeconn)
+	_, err := checkCloseShift(fptrfocloseshift, true, cassir, true)
+	if err != nil {
+		errorDescr := fmt.Sprintf("ошибка (%v) закрытия смены", err)
+		panic(errorDescr)
+	}
+	fptrfocloseshift.Close()
+	fptrfocloseshift.Destroy()
+
 	http.HandleFunc("/", handler)
 	http.ListenAndServe(":8080", nil)
 }
@@ -186,7 +209,7 @@ func sendComandeAndGetAnswerFromKKT(comJson, cassir string) (string, error) {
 		cassir = "админ"
 	}
 	fmt.Println("Успешное подключение к ККТ", typeconn)
-	_, err := checkCloseShift(fptr, true, cassir)
+	_, err := checkCloseShift(fptr, true, cassir, false)
 	if err != nil {
 		errorDescr := fmt.Sprintf("ошибка (%v). Смена истекла", err)
 		//logsmap[LOGERROR].Println(errorDescr)
@@ -256,7 +279,7 @@ func disconnectWithKKT(fptr *fptr10.IFptr, destroyComObject bool) {
 	}
 }
 
-func checkCloseShift(fptr *fptr10.IFptr, closeShiftIfClose bool, kassir string) (bool, error) {
+func checkCloseShift(fptr *fptr10.IFptr, closeShiftIfClose bool, kassir string, closeifopened bool) (bool, error) {
 	//logginInFile("получаем статус ККТ")
 	getStatusKKTJson := "{\"type\": \"getShiftStatus\"}"
 	resgetStatusKKT, err := sendComandeAndGetAnswerFromKKT__FPTR(fptr, getStatusKKTJson)
@@ -286,12 +309,28 @@ func checkCloseShift(fptr *fptr10.IFptr, closeShiftIfClose bool, kassir string) 
 	if answerOfGetStatusofShift.ShiftStatus.State == "closed" {
 		return true, nil
 	}
+	if (answerOfGetStatusofShift.ShiftStatus.State == "opened") && (closeifopened) {
+		if kassir == "" {
+			kassir = "админ"
+		}
+		jsonCloseShift := fmt.Sprintf("{\"type\": \"closeShift\", \"operator\": {\"name\": \"%v\"}}", kassir)
+		resCloseShift, err := sendComandeAndGetAnswerFromKKT__FPTR(fptr, jsonCloseShift)
+		if err != nil {
+			errorDescr := fmt.Sprintf("ошибка (%v) - не удалось закрыть смену", err)
+			fmt.Println(errorDescr)
+			return false, errors.New(errorDescr)
+		}
+		if !successCommand(resCloseShift) {
+			errorDescr := fmt.Sprintf("ошибка (%v) - не удалось закрыть смену", resCloseShift)
+			fmt.Println(errorDescr)
+			return false, errors.New(errorDescr)
+		}
+	}
 	if answerOfGetStatusofShift.ShiftStatus.State == "expired" {
 		if closeShiftIfClose {
 			if kassir == "" {
 				errorDescr := "не указано имя кассира для закрытия смены"
 				fmt.Println(errorDescr)
-				//logsmap[LOGERROR].Println(errorDescr)
 				return false, errors.New(errorDescr)
 			}
 			jsonCloseShift := fmt.Sprintf("{\"type\": \"closeShift\",\"operator\": {\"name\": \"%v\"}}", kassir)
@@ -299,13 +338,11 @@ func checkCloseShift(fptr *fptr10.IFptr, closeShiftIfClose bool, kassir string) 
 			if err != nil {
 				errorDescr := fmt.Sprintf("ошбика (%v) - не удалось закрыть смену", err)
 				fmt.Println(errorDescr)
-				//logsmap[LOGERROR].Println(errorDescr)
 				return false, errors.New(errorDescr)
 			}
 			if !successCommand(resCloseShift) {
 				errorDescr := fmt.Sprintf("ошбика (%v) - не удалось закрыть смену", resCloseShift)
 				fmt.Println(errorDescr)
-				//logsmap[LOGERROR].Println(errorDescr)
 				return false, errors.New(errorDescr)
 			}
 		} else {
